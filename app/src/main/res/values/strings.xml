@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">QuantumAI OS</string>
+    <string name="accessibility_service_description">Enables QuantumAI OS to automate app interactions, execute workflows, and control the device through AI commands.</string>
+</resources>
