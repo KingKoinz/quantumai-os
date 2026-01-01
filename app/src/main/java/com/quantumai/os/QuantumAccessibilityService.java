@@ -7,6 +7,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Path;
+import android.os.Build;
 import android.view.accessibility.AccessibilityEvent;
 
 public class QuantumAccessibilityService extends AccessibilityService {
@@ -27,13 +28,17 @@ public class QuantumAccessibilityService extends AccessibilityService {
     public void onServiceConnected() {
         // Register broadcast receiver for commands from WebUI
         IntentFilter filter = new IntentFilter("com.quantumai.ACCESSIBILITY_ACTION");
-        registerReceiver(commandReceiver, filter);
+        // Fix for Android 13+: Specify receiver export flag
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(commandReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(commandReceiver, filter);
+        }
     }
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
         // Can be used for recording workflows in the future
-        // For now, just execute commands
     }
 
     @Override
@@ -97,7 +102,6 @@ public class QuantumAccessibilityService extends AccessibilityService {
             dispatchGesture(builder.build(), new GestureResultCallback() {
                 @Override
                 public void onCompleted(GestureDescription gestureDescription) {
-                    // Notify WebUI of completion
                     sendResult("tap", true, "Tapped at " + x + "," + y);
                 }
 
@@ -155,7 +159,6 @@ public class QuantumAccessibilityService extends AccessibilityService {
     }
 
     private void sendResult(String action, boolean success, String message) {
-        // Broadcast result back to WebUI
         Intent intent = new Intent("com.quantumai.ACCESSIBILITY_RESULT");
         intent.putExtra("action", action);
         intent.putExtra("success", success);

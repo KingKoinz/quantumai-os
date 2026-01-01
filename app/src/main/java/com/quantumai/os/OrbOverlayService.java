@@ -9,11 +9,14 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.ServiceInfo;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.IBinder;
+import android.provider.Settings;
+import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -26,27 +29,35 @@ public class OrbOverlayService extends Service {
 
     private static final String CHANNEL_ID = "QuantumAI_Orb";
     private static final int NOTIFICATION_ID = 1001;
+    private static final String ACTION_SHOW_ORB = "com.quantumai.ACTION_SHOW_ORB";
 
     private WindowManager windowManager;
     private FrameLayout orbView;
     private View orbCircle;
+    private WindowManager.LayoutParams orbLayoutParams;
 
     private String currentState = "idle";
     private boolean isPulsing = false;
+    private boolean isOrbVisible = true;
 
-    // Color scheme
-    private static final int COLOR_IDLE = Color.parseColor("#4A90E2");      // Blue
-    private static final int COLOR_LISTENING = Color.parseColor("#50E3C2"); // Cyan
-    private static final int COLOR_THINKING = Color.parseColor("#F5A623");  // Orange
-    private static final int COLOR_SPEAKING = Color.parseColor("#7ED321");  // Green
-    private static final int COLOR_ERROR = Color.parseColor("#D0021B");     // Red
+    // Color scheme - 50% transparency
+    private static final int COLOR_IDLE = Color.parseColor("#804A90E2");
+    private static final int COLOR_LISTENING = Color.parseColor("#8050E3C2");
+    private static final int COLOR_THINKING = Color.parseColor("#80F5A623");
+    private static final int COLOR_SPEAKING = Color.parseColor("#807ED321");
+    private static final int COLOR_ERROR = Color.parseColor("#80D0021B");
 
     private BroadcastReceiver stateReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            String state = intent.getStringExtra("state");
-            if (state != null) {
-                updateOrbState(state);
+            String action = intent.getAction();
+            if (ACTION_SHOW_ORB.equals(action)) {
+                showOrb();
+            } else {
+                String state = intent.getStringExtra("state");
+                if (state != null) {
+                    updateOrbState(state);
+                }
             }
         }
     };
@@ -54,45 +65,55 @@ public class OrbOverlayService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-
-        // Create notification channel
         createNotificationChannel();
 
-        // Register broadcast receiver for state updates
-        IntentFilter filter = new IntentFilter("com.quantumai.ORB_STATE");
-        registerReceiver(stateReceiver, filter);
+        IntentFilter filter = new IntentFilter();
+        filter.addAction("com.quantumai.ORB_STATE");
+        filter.addAction(ACTION_SHOW_ORB);
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(stateReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(stateReceiver, filter);
+        }
 
-        // Create orb overlay
-        createOrbOverlay();
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(this)) {
+            createOrbOverlay();
+        }
 
-        // Start as foreground service
-        startForeground(NOTIFICATION_ID, createNotification());
+        startForegroundServiceCompat();
+    }
+
+    private void startForegroundServiceCompat() {
+        Notification notification = createNotification();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+        } else {
+            startForeground(NOTIFICATION_ID, notification);
+        }
     }
 
     private void createOrbOverlay() {
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
-
-        // Create orb container
         orbView = new FrameLayout(this);
-
-        // Create orb circle
         orbCircle = new View(this);
-        int orbSize = 120; // dp
+        
+        int orbSize = (int) (30 * getResources().getDisplayMetrics().density); 
         FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(orbSize, orbSize);
         params.gravity = Gravity.CENTER;
         orbCircle.setLayoutParams(params);
 
-        // Set initial appearance
         GradientDrawable background = new GradientDrawable();
         background.setShape(GradientDrawable.OVAL);
         background.setColor(COLOR_IDLE);
         orbCircle.setBackground(background);
-        orbCircle.setElevation(16);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            orbCircle.setElevation(8);
+        }
 
         orbView.addView(orbCircle);
 
-        // Window layout params
-        WindowManager.LayoutParams layoutParams = new WindowManager.LayoutParams(
+        orbLayoutParams = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
@@ -102,51 +123,61 @@ public class OrbOverlayService extends Service {
                 PixelFormat.TRANSLUCENT
         );
 
-        layoutParams.gravity = Gravity.TOP | Gravity.END;
-        layoutParams.x = 20;
-        layoutParams.y = 200;
+        orbLayoutParams.gravity = Gravity.TOP | Gravity.END;
+        orbLayoutParams.x = 20;
+        orbLayoutParams.y = 200;
 
-        // Make orb draggable
-        setupDraggable(orbView, layoutParams);
+        setupGestureDetection(orbView);
 
-        // Make orb tappable
-        orbView.setOnClickListener(v -> handleOrbTap());
+        try {
+            windowManager.addView(orbView, orbLayoutParams);
+            isOrbVisible = true;
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
 
-        // Add to window
-        windowManager.addView(orbView, layoutParams);
-
-        // Start idle pulse
         updateOrbState("idle");
     }
 
-    private void setupDraggable(View view, WindowManager.LayoutParams params) {
+    private void setupGestureDetection(View view) {
+        GestureDetector gestureDetector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+            @Override
+            public boolean onDoubleTap(MotionEvent e) {
+                hideOrb();
+                return true;
+            }
+
+            @Override
+            public boolean onSingleTapConfirmed(MotionEvent e) {
+                handleOrbTap();
+                return true;
+            }
+        });
+
         view.setOnTouchListener(new View.OnTouchListener() {
             private int initialX, initialY;
             private float initialTouchX, initialTouchY;
 
             @Override
             public boolean onTouch(View v, MotionEvent event) {
+                if (gestureDetector.onTouchEvent(event)) {
+                    return true;
+                }
+
                 switch (event.getAction()) {
                     case MotionEvent.ACTION_DOWN:
-                        initialX = params.x;
-                        initialY = params.y;
+                        initialX = orbLayoutParams.x;
+                        initialY = orbLayoutParams.y;
                         initialTouchX = event.getRawX();
                         initialTouchY = event.getRawY();
                         return true;
 
                     case MotionEvent.ACTION_MOVE:
-                        params.x = initialX + (int) (initialTouchX - event.getRawX());
-                        params.y = initialY + (int) (event.getRawY() - initialTouchY);
-                        windowManager.updateViewLayout(view, params);
-                        return true;
-
-                    case MotionEvent.ACTION_UP:
-                        // Detect tap vs drag
-                        int deltaX = (int) (event.getRawX() - initialTouchX);
-                        int deltaY = (int) (event.getRawY() - initialTouchY);
-                        if (Math.abs(deltaX) < 10 && Math.abs(deltaY) < 10) {
-                            v.performClick();
-                        }
+                        orbLayoutParams.x = initialX + (int) (initialTouchX - event.getRawX());
+                        orbLayoutParams.y = initialY + (int) (event.getRawY() - initialTouchY);
+                        try {
+                            windowManager.updateViewLayout(orbView, orbLayoutParams);
+                        } catch (Exception ex) {}
                         return true;
                 }
                 return false;
@@ -154,57 +185,65 @@ public class OrbOverlayService extends Service {
         });
     }
 
+    private void hideOrb() {
+        if (isOrbVisible && orbView != null) {
+            orbView.setVisibility(View.GONE);
+            isOrbVisible = false;
+            // Update notification to show "Tap to restore"
+            NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            manager.notify(NOTIFICATION_ID, createNotification());
+        }
+    }
+
+    private void showOrb() {
+        if (!isOrbVisible && orbView != null) {
+            orbView.setVisibility(View.VISIBLE);
+            isOrbVisible = true;
+            // Restore normal notification
+            NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            manager.notify(NOTIFICATION_ID, createNotification());
+        }
+    }
+
     private void handleOrbTap() {
-        // Notify MainActivity to start voice input
         Intent intent = new Intent("com.quantumai.ORB_TAPPED");
         sendBroadcast(intent);
-
-        // Could also directly trigger voice here
-        // For now, let MainActivity handle it via WebUI
     }
 
     private void updateOrbState(String state) {
         if (state.equals(currentState)) return;
-
         currentState = state;
         isPulsing = false;
-        orbCircle.clearAnimation();
+        orbCircle.animate().cancel();
 
         switch (state) {
             case "idle":
                 setOrbColor(COLOR_IDLE);
-                startPulse(1000, 1.15f); // Gentle pulse
+                startPulse(1000, 1.15f);
                 break;
-
             case "listening":
                 setOrbColor(COLOR_LISTENING);
-                orbCircle.setAlpha(1.0f);
-                orbCircle.setScaleX(1.0f);
-                orbCircle.setScaleY(1.0f);
+                orbCircle.setAlpha(0.6f);
                 break;
-
             case "thinking":
                 setOrbColor(COLOR_THINKING);
-                startPulse(1200, 1.1f); // Slow pulse
+                startPulse(1200, 1.1f);
                 break;
-
             case "speaking":
                 setOrbColor(COLOR_SPEAKING);
-                startPulse(400, 1.2f); // Fast pulse
+                startPulse(400, 1.2f);
                 break;
-
             case "error":
                 setOrbColor(COLOR_ERROR);
-                orbCircle.setAlpha(1.0f);
-                orbCircle.setScaleX(1.0f);
-                orbCircle.setScaleY(1.0f);
+                orbCircle.setAlpha(0.6f);
                 break;
         }
     }
 
     private void setOrbColor(int color) {
-        GradientDrawable background = (GradientDrawable) orbCircle.getBackground();
-        background.setColor(color);
+        if (orbCircle.getBackground() instanceof GradientDrawable) {
+            ((GradientDrawable) orbCircle.getBackground()).setColor(color);
+        }
     }
 
     private void startPulse(int duration, float scale) {
@@ -213,21 +252,20 @@ public class OrbOverlayService extends Service {
     }
 
     private void pulseAnimation(int duration, float scale) {
+        if (!isPulsing) return;
         orbCircle.animate()
                 .scaleX(scale)
                 .scaleY(scale)
-                .alpha(0.7f)
+                .alpha(0.4f)
                 .setDuration(duration)
                 .withEndAction(() -> {
                     orbCircle.animate()
                             .scaleX(1.0f)
                             .scaleY(1.0f)
-                            .alpha(1.0f)
+                            .alpha(0.6f)
                             .setDuration(duration)
                             .withEndAction(() -> {
-                                if (isPulsing) {
-                                    pulseAnimation(duration, scale);
-                                }
+                                if (isPulsing) pulseAnimation(duration, scale);
                             });
                 });
     }
@@ -235,28 +273,24 @@ public class OrbOverlayService extends Service {
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID,
-                    "QuantumAI Orb",
-                    NotificationManager.IMPORTANCE_LOW
-            );
-            channel.setDescription("Shows QuantumAI status orb");
-            channel.setShowBadge(false);
-
+                    CHANNEL_ID, "QuantumAI Orb", NotificationManager.IMPORTANCE_LOW);
             NotificationManager manager = getSystemService(NotificationManager.class);
-            manager.createNotificationChannel(channel);
+            if (manager != null) manager.createNotificationChannel(channel);
         }
     }
 
     private Notification createNotification() {
-        Intent notificationIntent = new Intent(this, MainActivity.class);
-        PendingIntent pendingIntent = PendingIntent.getActivity(
-                this, 0, notificationIntent,
-                PendingIntent.FLAG_IMMUTABLE
-        );
+        // Intent to restore the orb when notification is tapped
+        Intent showIntent = new Intent(this, OrbOverlayService.class);
+        showIntent.setAction(ACTION_SHOW_ORB);
+        PendingIntent pendingIntent = PendingIntent.getService(
+                this, 0, showIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+        String contentText = isOrbVisible ? "Orb active (Double tap orb to hide)" : "Orb hidden (Tap here to restore)";
 
         return new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("QuantumAI OS")
-                .setContentText("Orb active")
+                .setContentText(contentText)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setContentIntent(pendingIntent)
                 .setOngoing(true)
@@ -264,16 +298,23 @@ public class OrbOverlayService extends Service {
     }
 
     @Override
-    public void onDestroy() {
-        super.onDestroy();
-        if (orbView != null && windowManager != null) {
-            windowManager.removeView(orbView);
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null && ACTION_SHOW_ORB.equals(intent.getAction())) {
+            showOrb();
         }
-        unregisterReceiver(stateReceiver);
+        return START_STICKY;
     }
 
     @Override
-    public IBinder onBind(Intent intent) {
-        return null;
+    public void onDestroy() {
+        super.onDestroy();
+        isPulsing = false;
+        if (orbView != null && windowManager != null) {
+            try { windowManager.removeView(orbView); } catch (Exception e) {}
+        }
+        try { unregisterReceiver(stateReceiver); } catch (Exception e) {}
     }
+
+    @Override
+    public IBinder onBind(Intent intent) { return null; }
 }
