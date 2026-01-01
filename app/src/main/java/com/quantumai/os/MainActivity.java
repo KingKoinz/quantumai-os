@@ -21,7 +21,6 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
 
         try {
-            // Check and request overlay permission for orb
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 if (!Settings.canDrawOverlays(this)) {
                     Toast.makeText(this, "Please grant overlay permission for orb", Toast.LENGTH_LONG).show();
@@ -35,21 +34,15 @@ public class MainActivity extends AppCompatActivity {
                 startOrbService();
             }
 
-            // Create WebView
             WebView webView = new WebView(this);
             
-            // Enable JavaScript
             WebSettings settings = webView.getSettings();
             settings.setJavaScriptEnabled(true);
             settings.setDomStorageEnabled(true);
             
-            // Set WebView client
             webView.setWebViewClient(new WebViewClient());
-            
-            // Load URL
             webView.loadUrl("http://127.0.0.1:5000");
             
-            // Set as content view
             setContentView(webView);
             
         } catch (Exception e) {
@@ -87,33 +80,3 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 }
-```
-
-**4. Commit changes** → Message: "Add orb overlay service"
-
----
-
-## **What This Does:**
-
-✅ Keeps WebView working  
-✅ Asks for overlay permission when you open app  
-✅ Starts orb service when permission granted  
-✅ Shows helpful messages  
-✅ Won't crash if orb fails  
-
----
-
-## **After New Build Completes:**
-
-**1. Download new APK** (same process as before)
-
-**2. Install it** (will update existing app)
-
-**3. When you open app:**
-- It will ask for overlay permission
-- Grant it
-- **Blue orb should appear!** ✨
-
-**4. Grant accessibility too** (if you want tap/swipe automation):
-```
-Settings → Accessibility → QuantumAI OS → Toggle ON
